@@ -62,6 +62,24 @@ async function wajibKasir(req, res, next) {
   }
 }
 
+// --------------------------- 3b. Helper: id pesanan yang aman untuk Firebase
+// Key di Firebase Realtime Database tidak boleh mengandung karakter
+// '.', '#', '$', '[', ']', '/' atau kosong. Kalau id yang dikirim client
+// (lihat 6a di bawah) mengandung karakter itu / kosong, kita anggap tidak
+// valid dan generate id baru sendiri — supaya endpoint ini tidak pernah
+// membuat node Firebase yang rusak/error karena key ilegal.
+function idPesananValid(id) {
+  return (
+    typeof id === 'string' &&
+    id.trim().length > 0 &&
+    !/[.#$\[\]/]/.test(id)
+  );
+}
+
+function buatIdBaru() {
+  return 'ord_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+}
+
 // --------------------------- 4. Endpoint: cek server hidup -----------------
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'Kopi Senja API jalan normal.' });
@@ -81,13 +99,25 @@ app.get('/api/menu', async (req, res) => {
 // --------------------------- 6. Endpoint PESANAN (orders) -------------------
 
 // 6a. Pembeli membuat pesanan baru — tidak perlu login.
+//
+// PERBAIKAN (bug id mismatch): sebelumnya baris ini SELALU generate id baru
+// sendiri, mengabaikan id yang sudah dibuat & dipakai browser pembeli untuk
+// bikin QR code (lihat pushOrderToKasir() di index-6.html). Akibatnya id di
+// QR (sisi pembeli) beda dengan id yang benar-benar tersimpan di Firebase,
+// jadi waktu kasir scan QR, id itu tidak pernah cocok dengan data di
+// Firebase — selalu "Kode tidak ditemukan", walau pesanannya sebenarnya ada.
+//
+// Sekarang: kalau body.id dikirim dan valid, PAKAI itu (biar sama persis
+// dengan id yang sudah tercetak di QR pembeli). Kalau tidak dikirim/tidak
+// valid, baru generate sendiri seperti sebelumnya (jaga-jaga untuk klien
+// lain yang belum mengirim id).
 app.post('/api/orders', async (req, res) => {
   try {
     const body = req.body || {};
     if (!Array.isArray(body.items) || body.items.length === 0) {
       return res.status(400).json({ error: 'Pesanan harus punya minimal 1 item.' });
     }
-    const id = 'ord_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const id = idPesananValid(body.id) ? body.id.trim() : buatIdBaru();
     const order = {
       id,
       queueNo: body.queueNo || null,
